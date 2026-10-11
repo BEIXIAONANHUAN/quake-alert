@@ -280,7 +280,7 @@
   }
 
   async function loadQuakes() {
-    const res = await fetch(cfg.P2P_API || "https://api.p2pquake.net/v2/history?codes=551,556&limit=20");
+    const res = await fetch(cfg.P2P_API || "https://api.p2pquake.net/v2/history?codes=551&codes=556&limit=20");
     if (!res.ok) throw new Error("地震接口请求失败：" + res.status);
     const raw = await res.json();
     return (raw || []).filter((x) => x.code === 551 || x.code === 556);

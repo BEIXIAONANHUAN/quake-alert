@@ -6,7 +6,7 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.4";
 
 const PREFECTURE = "山梨県";
-const P2P_URL = "https://api.p2pquake.net/v2/history?codes=551,556&limit=50";
+const P2P_URL = "https://api.p2pquake.net/v2/history?codes=551&codes=556&limit=50";
 const PUSHPLUS_URL = "http://www.pushplus.plus/send";
 
 function scaleToUser(v: unknown): number {
@@ -99,8 +99,14 @@ Deno.serve(async (req) => {
   // 近 24 小时数据
   let items: any[] = [];
   try {
-    const res = await fetch(P2P_URL);
-    const raw = await res.json();
+    const res = await fetch(P2P_URL, {
+      headers: { "User-Agent": "quake-alert-personal/1.0" },
+    });
+    const text = await res.text();
+    if (!res.ok) {
+      return json({ ok: false, error: `P2P HTTP ${res.status}`, body: text.slice(0, 200) }, 502);
+    }
+    const raw = text ? JSON.parse(text) : [];
     items = Array.isArray(raw) ? raw : [];
   } catch (e) {
     return json({ ok: false, error: String(e) }, 502);
