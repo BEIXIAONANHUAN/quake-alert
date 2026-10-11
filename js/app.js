@@ -234,12 +234,21 @@
   function alertCardHtml(item) {
     const isEew = item.type === "eew";
     const isNightly = item.type === "nightly";
+    const isTest = item.type === "test";
     const badge = isEew
       ? '<span class="badge badge-eew">緊急地震速報</span>'
-      : isNightly
-        ? '<span class="badge badge-nightly">夜间汇总</span>'
-        : '<span class="badge badge-quake">有感地震</span>';
-    const cls = isEew ? "card eew" : isNightly ? "card nightly" : "card quiet";
+      : isTest
+        ? '<span class="badge badge-test">测试推送</span>'
+        : isNightly
+          ? '<span class="badge badge-nightly">夜间汇总</span>'
+          : '<span class="badge badge-quake">有感地震</span>';
+    const cls = isEew
+      ? "card eew"
+      : isTest
+        ? "card test"
+        : isNightly
+          ? "card nightly"
+          : "card quiet";
     const text = stripHtml(item.content);
     return `
       <article class="${cls}">
@@ -421,22 +430,50 @@
   }
 
   async function loadStats() {
-    // 拉更多历史做山梨有感统计
-    const res = await fetch("https://api.p2pquake.net/v2/history?codes=551&limit=100");
-    if (!res.ok) throw new Error("统计接口失败");
-    const raw = (await res.json()) || [];
+    // 翻页拉满近 30 天，避免 limit=100 截断
     const keys = new Set(last30Keys());
     const countMap = {};
     const dist = {};
-    for (const item of raw) {
-      const yama = extractYamanashiScale(item);
-      // 口径：山梨県震度 ≥ 1
-      if (yama < 1) continue;
-      const k = dayKey(item.time || item.earthquake?.time || item.timestamp?.register);
-      if (!k || !keys.has(k)) continue;
-      countMap[k] = (countMap[k] || 0) + 1;
-      dist[yama] = (dist[yama] || 0) + 1;
+    const pageSize = 100;
+    let offset = 0;
+    let keepGoing = true;
+    let oldest = null;
+
+    while (keepGoing && offset < 1000) {
+      const url =
+        "https://api.p2pquake.net/v2/history?codes=551&limit=" +
+        pageSize +
+        "&offset=" +
+        offset;
+      const res = await fetch(url);
+      if (!res.ok) throw new Error("统计接口失败");
+      const raw = (await res.json()) || [];
+      if (!raw.length) break;
+
+      for (const item of raw) {
+        const when = item.time || item.earthquake?.time || item.timestamp?.register;
+        const k = dayKey(when);
+        if (!k) continue;
+        oldest = oldest && oldest < k ? oldest : k;
+        if (!keys.has(k)) continue;
+        const yama = extractYamanashiScale(item);
+        // 口径：山梨県震度 ≥ 1
+        if (yama < 1) continue;
+        countMap[k] = (countMap[k] || 0) + 1;
+        dist[yama] = (dist[yama] || 0) + 1;
+      }
+
+      // 本页最旧一天已早于 30 天窗口，或不足一页则停
+      const firstDay = dayKey(raw[0]?.time || raw[0]?.earthquake?.time);
+      const lastDay = dayKey(
+        raw[raw.length - 1]?.time || raw[raw.length - 1]?.earthquake?.time
+      );
+      const oldestKey = [...keys].sort()[0];
+      if (lastDay && lastDay < oldestKey) keepGoing = false;
+      if (raw.length < pageSize) keepGoing = false;
+      offset += pageSize;
     }
+
     renderDailyChart(countMap);
     renderShindoChart(dist);
   }

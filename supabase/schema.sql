@@ -17,7 +17,7 @@ create table if not exists public.alerts (
   id uuid primary key default gen_random_uuid(),
   user_id uuid not null,
   quake_id text not null,
-  type text not null check (type in ('eew', 'quake', 'nightly')),
+  type text not null check (type in ('eew', 'quake', 'nightly', 'test')),
   title text not null,
   content text not null,
   shindo numeric,

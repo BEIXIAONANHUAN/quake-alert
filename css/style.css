@@ -318,6 +318,7 @@ button { cursor: pointer; }
 }
 .topbar.dimmed {
   opacity: 0.45;
+  pointer-events: none;
 }
 
 /* 冬眠极简页 */
@@ -533,6 +534,7 @@ body.is-hibernating {
 .card.eew::before { background: var(--danger); }
 .card.quake-hit::before { background: var(--accent); }
 .card.nightly::before { background: var(--safe); }
+.card.test::before { background: #9ad7ff; }
 .card.quiet::before { background: var(--ink-faint); }
 
 .card-top {
@@ -579,6 +581,10 @@ body.is-hibernating {
 .badge-eew { background: var(--danger-soft); color: #ff8b82; }
 .badge-quake { background: var(--accent-soft); color: #ffb08a; }
 .badge-nightly { background: var(--safe-soft); color: var(--safe); }
+.badge-test {
+  background: rgba(154, 215, 255, 0.12);
+  color: #9ad7ff;
+}
 .badge-hit {
   background: rgba(255, 107, 53, 0.18);
   color: #ffb08a;
@@ -789,7 +795,7 @@ input[type="range"] {
   background: rgba(0, 0, 0, 0.55);
   display: grid;
   place-items: center;
-  z-index: 50;
+  z-index: 70;
   padding: 18px;
 }
 .modal-card {
@@ -818,7 +824,7 @@ input[type="range"] {
   border-radius: 999px;
   padding: 10px 16px;
   font-size: 13px;
-  z-index: 60;
+  z-index: 80;
   box-shadow: var(--shadow);
   max-width: min(92vw, 420px);
   text-align: center;

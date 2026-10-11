@@ -60,7 +60,7 @@ Deno.serve(async (req) => {
     await admin.from("alerts").upsert({
       user_id: FIXED_USER_ID,
       quake_id: `test-${Date.now()}`,
-      type: "nightly",
+      type: "test",
       title,
       content,
       shindo: null,
