@@ -1,5 +1,5 @@
 /**
- * 设置页逻辑：震度下限 / 冬眠 / 测试推送
+ * 设置页逻辑：震度下限 / 冬眠 / 测试推送（单用户）
  */
 (function () {
   const $ = (sel) => document.querySelector(sel);
@@ -67,8 +67,7 @@
   }
 
   async function loadSettings() {
-    const user = await window.QuakeDB.getUser();
-    if (!user) return null;
+    const user = window.QuakeDB.getUser();
     const sb = window.QuakeDB.init();
     let { data, error } = await sb
       .from("settings")
@@ -91,7 +90,7 @@
   }
 
   async function saveMinShindo(value) {
-    const user = await window.QuakeDB.getUser();
+    const user = window.QuakeDB.getUser();
     const sb = window.QuakeDB.init();
     const { error } = await sb
       .from("settings")
@@ -100,7 +99,7 @@
   }
 
   async function saveHibernation(flag) {
-    const user = await window.QuakeDB.getUser();
+    const user = window.QuakeDB.getUser();
     const sb = window.QuakeDB.init();
     const { error } = await sb
       .from("settings")
@@ -111,7 +110,7 @@
   async function sendTestPush() {
     const sb = window.QuakeDB.init();
     const { data, error } = await sb.functions.invoke("test-push", {
-      body: { source: "settings-page" },
+      body: { source: "settings-page", user_id: window.QuakeDB.userId },
     });
     if (error) throw error;
     return data;
@@ -144,7 +143,7 @@
       const hib = $("#hibernate-btn");
       if (hib) {
         hib.addEventListener("click", async () => {
-          const user = await window.QuakeDB.getUser();
+          const user = window.QuakeDB.getUser();
           const sb = window.QuakeDB.init();
           const { data } = await sb
             .from("settings")

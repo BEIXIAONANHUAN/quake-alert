@@ -113,10 +113,9 @@
       .replace(/"/g, "&quot;");
   }
 
-  /* ---------- 视图切换 ---------- */
+  /* ---------- 视图切换（单用户，直接进仪表盘） ---------- */
   function showLogin() {
-    $("#view-login")?.classList.remove("hidden");
-    $("#view-main")?.classList.add("hidden");
+    showMain();
   }
 
   function showMain() {
@@ -204,8 +203,7 @@
   }
 
   async function loadAlerts() {
-    const user = await window.QuakeDB.getUser();
-    if (!user) return [];
+    const user = window.QuakeDB.getUser();
     const sb = window.QuakeDB.init();
     const { data, error } = await sb
       .from("alerts")
@@ -549,24 +547,10 @@
       return;
     }
 
-    const session = await window.QuakeDB.getSession().catch(() => null);
-    if (session) {
-      showMain();
-      await refreshSettings();
-      await refreshDashboard();
-    } else {
-      showLogin();
-    }
-
-    window.QuakeDB.onAuthStateChange(async (event, session) => {
-      if (session) {
-        showMain();
-        await refreshSettings();
-        await refreshDashboard();
-      } else if (event === "SIGNED_OUT") {
-        showLogin();
-      }
-    });
+    // 单用户模式：直接进入仪表盘
+    showMain();
+    await refreshSettings();
+    await refreshDashboard();
   }
 
   window.AppUI = {

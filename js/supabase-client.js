@@ -1,5 +1,5 @@
 /**
- * Supabase 客户端初始化
+ * Supabase 客户端初始化（单用户模式，不依赖登录）
  */
 (function () {
   const cfg = window.QUAKE_CONFIG;
@@ -10,6 +10,8 @@
   window.QuakeDB = {
     client: null,
     ready: false,
+    /** 网站唯一用户 */
+    userId: (cfg && cfg.FIXED_USER_ID) || "00000000-0000-0000-0000-000000000001",
 
     init() {
       if (this.client) return this.client;
@@ -20,41 +22,17 @@
       }
       this.client = window.supabase.createClient(cfg.SUPABASE_URL, cfg.SUPABASE_ANON_KEY, {
         auth: {
-          persistSession: true,
-          autoRefreshToken: true,
-          detectSessionInUrl: true,
+          persistSession: false,
+          autoRefreshToken: false,
+          detectSessionInUrl: false,
         },
       });
       this.ready = true;
       return this.client;
     },
 
-    async getSession() {
-      const sb = this.init();
-      if (!sb) return null;
-      const { data, error } = await sb.auth.getSession();
-      if (error) throw error;
-      return data.session;
-    },
-
-    async getUser() {
-      const sb = this.init();
-      if (!sb) return null;
-      const { data, error } = await sb.auth.getUser();
-      if (error) throw error;
-      return data.user;
-    },
-
-    onAuthStateChange(cb) {
-      const sb = this.init();
-      if (!sb) return { data: { subscription: null } };
-      return sb.auth.onAuthStateChange(cb);
-    },
-
-    async signOut() {
-      const sb = this.init();
-      if (!sb) return;
-      await sb.auth.signOut();
+    getUser() {
+      return { id: this.userId };
     },
   };
 })();

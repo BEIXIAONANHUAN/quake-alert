@@ -1,10 +1,12 @@
 // ============================================
 // Edge Function: test-push
-// 登录用户在设置页点击「发送测试推送」时调用
+// 单用户模式：无需登录，直接发测试推送
 // ============================================
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.4";
 
 const PUSHPLUS_URL = "http://www.pushplus.plus/send";
+/** 单用户固定身份 */
+const FIXED_USER_ID = "00000000-0000-0000-0000-000000000001";
 
 function nowJstString(): string {
   const d = new Date(Date.now() + 9 * 3600 * 1000);
@@ -25,24 +27,10 @@ Deno.serve(async (req) => {
     });
   }
 
-  const authHeader = req.headers.get("Authorization") || "";
   const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
-  const anonKey = Deno.env.get("SUPABASE_ANON_KEY")!;
   const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
   const pushToken = Deno.env.get("PUSHPLUS_TOKEN") || "";
 
-  // 校验登录用户
-  const userClient = createClient(supabaseUrl, anonKey, {
-    global: { headers: { Authorization: authHeader } },
-    auth: { persistSession: false },
-  });
-  const { data: userData, error: userErr } = await userClient.auth.getUser();
-  if (userErr || !userData?.user) {
-    return json({ ok: false, message: "请先登录" }, 401);
-  }
-  const userId = userData.user.id;
-
-  // 冬眠中也允许测试通道（否则无法确认能否恢复）
   if (!pushToken) {
     return json({ ok: false, message: "尚未配置 PUSHPLUS_TOKEN" }, 500);
   }
@@ -68,10 +56,9 @@ Deno.serve(async (req) => {
     const data = await res.json().catch(() => ({}));
     const ok = res.ok && (data?.code === 200 || data?.code === "200");
 
-    // 记一条测试日志（不强制防重复）
     const admin = createClient(supabaseUrl, serviceKey);
     await admin.from("alerts").upsert({
-      user_id: userId,
+      user_id: FIXED_USER_ID,
       quake_id: `test-${Date.now()}`,
       type: "nightly",
       title,

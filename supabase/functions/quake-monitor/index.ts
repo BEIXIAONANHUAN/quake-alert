@@ -8,6 +8,8 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.4";
 
 const PREFECTURE = "山梨県";
+/** 单用户固定身份 */
+const FIXED_USER_ID = "00000000-0000-0000-0000-000000000001";
 const P2P_URL = "https://api.p2pquake.net/v2/history?codes=551&codes=556&limit=20";
 const PUSHPLUS_URL = "http://www.pushplus.plus/send";
 
@@ -140,13 +142,20 @@ Deno.serve(async (req) => {
   const pushToken = Deno.env.get("PUSHPLUS_TOKEN") || "";
   const admin = createClient(supabaseUrl, serviceKey);
 
-  // 读取全部用户设置
+  // 单用户模式：只读固定用户的设置
   const { data: settingsRows, error: setErr } = await admin
     .from("settings")
-    .select("user_id, min_shindo, is_hibernating");
+    .select("user_id, min_shindo, is_hibernating")
+    .eq("user_id", FIXED_USER_ID)
+    .maybeSingle();
   if (setErr) return json({ ok: false, error: setErr.message }, 500);
 
-  const users = settingsRows || [];
+  const userRow = settingsRows || {
+    user_id: FIXED_USER_ID,
+    min_shindo: 2,
+    is_hibernating: false,
+  };
+  const users = [userRow];
   const activeUsers = users.filter((u) => !u.is_hibernating);
 
   // 拉取 P2P
