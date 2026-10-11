@@ -1,0 +1,231 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#0B0F14" />
+  <meta name="description" content="地震预警 — 山梨県甲府市个人地震监测与微信推送" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="地震预警" />
+  <title>地震预警</title>
+  <link rel="manifest" href="manifest.json" />
+  <link rel="icon" type="image/png" href="icons/icon-192.png" />
+  <link rel="apple-touch-icon" href="icons/icon-192.png" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Noto+Sans+SC:wght@400;500;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="css/style.css" />
+</head>
+<body>
+  <div id="app">
+    <!-- ========== 登录页 ========== -->
+    <section id="view-login" class="view hidden">
+      <div class="login-wrap">
+        <div class="login-card">
+          <div class="login-brand">
+            <div class="brand-mark">震</div>
+            <h1>地震预警</h1>
+            <p class="muted">山梨県甲府市 · 个人地震监测守护</p>
+          </div>
+          <form id="login-form" class="login-form">
+            <label class="field">
+              <span>邮箱</span>
+              <input type="email" id="login-email" placeholder="you@example.com" required autocomplete="email" />
+            </label>
+            <button type="submit" class="btn btn-primary btn-block" id="login-btn">发送魔法链接</button>
+            <p class="hint muted">登录后我们会向该邮箱发送一条登录链接，点击即可进入。</p>
+            <div id="login-msg" class="msg hidden"></div>
+          </form>
+        </div>
+      </div>
+    </section>
+
+    <!-- ========== 主应用 ========== -->
+    <section id="view-main" class="view hidden">
+      <header class="topbar">
+        <div class="topbar-inner">
+          <div class="brand">
+            <div class="brand-mark sm">震</div>
+            <div>
+              <div class="brand-title">地震预警</div>
+              <div class="brand-sub muted">山梨県甲府市善光寺3-1-5</div>
+            </div>
+          </div>
+          <nav class="tabs" role="tablist">
+            <button class="tab active" data-tab="dashboard" type="button">仪表盘</button>
+            <button class="tab" data-tab="settings" type="button">设置</button>
+          </nav>
+          <button id="logout-btn" class="btn btn-ghost" type="button">退出</button>
+        </div>
+      </header>
+
+      <!-- 仪表盘 -->
+      <main id="tab-dashboard" class="tab-panel">
+        <!-- 大状态灯 -->
+        <section class="status-hero" id="panel-status">
+          <div class="status-light" id="status-light">
+            <div class="status-glyph" id="status-glyph">🟢</div>
+            <div class="status-text">
+              <div class="status-label" id="status-label">工作中</div>
+              <div class="status-desc muted" id="status-desc">正在监测山梨県地震活动</div>
+            </div>
+          </div>
+          <div class="status-meta">
+            <div class="meta-chip">
+              <span class="meta-k">震度下限</span>
+              <span class="meta-v" id="meta-min-shindo">2</span>
+            </div>
+            <div class="meta-chip">
+              <span class="meta-k">最近推送</span>
+              <span class="meta-v" id="meta-last-push">—</span>
+            </div>
+            <div class="meta-chip">
+              <span class="meta-k">更新时间</span>
+              <span class="meta-v" id="meta-updated">—</span>
+            </div>
+          </div>
+        </section>
+
+        <!-- 最近提醒 -->
+        <section class="panel" id="panel-alerts">
+          <div class="panel-head">
+            <h2>最近提醒</h2>
+            <button class="btn btn-ghost btn-sm" id="refresh-alerts" type="button">刷新</button>
+          </div>
+          <div id="alerts-list" class="card-list">
+            <div class="empty muted">加载中…</div>
+          </div>
+        </section>
+
+        <!-- 实时地震 -->
+        <section class="panel" id="panel-quakes">
+          <div class="panel-head">
+            <h2>实时地震</h2>
+            <div class="panel-actions">
+              <span class="muted small">最近 20 条全国地震</span>
+              <button class="btn btn-ghost btn-sm" id="refresh-quakes" type="button">刷新</button>
+            </div>
+          </div>
+          <div id="quakes-list" class="card-list">
+            <div class="empty muted">加载中…</div>
+          </div>
+        </section>
+
+        <!-- 近30天统计 -->
+        <section class="panel" id="panel-stats">
+          <div class="panel-head">
+            <h2>近 30 天统计</h2>
+            <span class="muted small" id="stats-range">—</span>
+          </div>
+          <div class="stats-wrap">
+            <div class="stats-block">
+              <h3 class="stats-title">每日地震次数</h3>
+              <div class="chart-scroll">
+                <div class="bar-chart" id="daily-chart" aria-label="每日地震次数柱状图"></div>
+              </div>
+              <div class="chart-legend muted small">
+                <span>纵轴：次数</span>
+                <span>横轴：近 30 天（含今天）</span>
+              </div>
+            </div>
+            <div class="stats-block">
+              <h3 class="stats-title">震度分布</h3>
+              <div class="hbar-chart" id="shindo-chart" aria-label="震度分布"></div>
+            </div>
+          </div>
+        </section>
+      </main>
+
+      <!-- 设置页 -->
+      <main id="tab-settings" class="tab-panel hidden">
+        <section class="panel">
+          <div class="panel-head">
+            <h2>推送设置</h2>
+          </div>
+
+          <div class="setting-row">
+            <div class="setting-info">
+              <div class="setting-title">山梨県震度下限</div>
+              <div class="muted small">达到或超过该震度的有感地震才会推送。緊急地震速報不受此限制。</div>
+            </div>
+            <div class="setting-control">
+              <div class="slider-row">
+                <input type="range" id="min-shindo" min="0" max="7" step="1" value="2" />
+                <div class="slider-value"><span id="min-shindo-val">2</span></div>
+              </div>
+              <div class="shindo-scale muted small" id="shindo-scale-labels">
+                <span>0</span><span>1</span><span>2</span><span>3</span><span>4</span><span>5</span><span>6</span><span>7</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="setting-row">
+            <div class="setting-info">
+              <div class="setting-title">冬眠模式</div>
+              <div class="muted small">开启后停止全部监控与推送（含夜间汇总）。</div>
+            </div>
+            <div class="setting-control">
+              <button id="hibernate-btn" class="btn btn-warn" type="button">开启冬眠</button>
+            </div>
+          </div>
+
+          <div class="setting-row">
+            <div class="setting-info">
+              <div class="setting-title">测试推送</div>
+              <div class="muted small">向微信发送一条测试消息，确认 PushPlus 通道正常。</div>
+            </div>
+            <div class="setting-control">
+              <button id="test-push-btn" class="btn btn-primary" type="button">发送测试推送</button>
+            </div>
+          </div>
+
+          <div class="setting-row">
+            <div class="setting-info">
+              <div class="setting-title">我的地址</div>
+              <div class="muted small">固定监测地点，仅展示不可修改。</div>
+            </div>
+            <div class="setting-control">
+              <div class="address-box">山梨県甲府市善光寺3-1-5</div>
+            </div>
+          </div>
+        </section>
+
+        <section class="panel">
+          <div class="panel-head">
+            <h2>关于</h2>
+          </div>
+          <div class="about-box muted">
+            <p>数据源：P2P地震情報 JSON API（気象庁解析）</p>
+            <p>推送通道：PushPlus 微信服务号</p>
+            <p>监控频率：每 5 分钟 · 夜间汇总：日本时间每日 0 点</p>
+            <p class="small">本站为个人自用防灾工具，正式预警请以気象庁与紧急地震速报为准。</p>
+          </div>
+        </section>
+      </main>
+    </section>
+  </div>
+
+  <!-- 确认弹窗 -->
+  <div id="modal" class="modal hidden" role="dialog" aria-modal="true">
+    <div class="modal-card">
+      <h3 id="modal-title">确认操作</h3>
+      <p id="modal-body">确定吗？</p>
+      <div class="modal-actions">
+        <button class="btn btn-ghost" id="modal-cancel" type="button">取消</button>
+        <button class="btn btn-primary" id="modal-ok" type="button">确认</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 轻提示 -->
+  <div id="toast" class="toast hidden"></div>
+
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
+  <script src="js/config.js"></script>
+  <script src="js/supabase-client.js"></script>
+  <script src="js/auth.js"></script>
+  <script src="js/settings.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>

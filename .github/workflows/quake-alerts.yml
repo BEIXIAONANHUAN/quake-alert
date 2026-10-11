@@ -1,0 +1,60 @@
+# 地震预警 · 定时触发 Edge Function
+# 每 5 分钟实时监控；每天 15:00 UTC（日本 0 点）夜间汇总
+name: Quake Alerts Cron
+
+on:
+  schedule:
+    - cron: "*/5 * * * *"   # 每 5 分钟实时监控
+    - cron: "0 15 * * *"    # UTC 15:00 = 日本时间 00:00 夜间汇总
+  workflow_dispatch:
+    inputs:
+      job:
+        description: "手动触发哪一个"
+        required: true
+        default: "monitor"
+        type: choice
+        options:
+          - monitor
+          - nightly
+          - both
+
+concurrency:
+  group: quake-alerts
+  cancel-in-progress: false
+
+jobs:
+  monitor:
+    name: 实时监控
+    if: >
+      github.event_name == 'workflow_dispatch' &&
+      (github.event.inputs.job == 'monitor' || github.event.inputs.job == 'both')
+      || github.event_name == 'schedule' && github.event.schedule == '*/5 * * * *'
+    runs-on: ubuntu-latest
+    steps:
+      - name: 调用 quake-monitor
+        run: |
+          curl -sS -X POST "${{ secrets.SUPABASE_FUNCTION_BASE }}/quake-monitor" \
+            -H "Authorization: Bearer ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}" \
+            -H "X-Cron-Secret: ${{ secrets.CRON_SECRET }}" \
+            -H "Content-Type: application/json" \
+            -d '{"source":"github-actions"}' \
+            -o /tmp/resp.json -w "HTTP:%{http_code}\n"
+          cat /tmp/resp.json || true
+
+  nightly:
+    name: 夜间汇总
+    if: >
+      github.event_name == 'workflow_dispatch' &&
+      (github.event.inputs.job == 'nightly' || github.event.inputs.job == 'both')
+      || github.event_name == 'schedule' && github.event.schedule == '0 15 * * *'
+    runs-on: ubuntu-latest
+    steps:
+      - name: 调用 nightly-report
+        run: |
+          curl -sS -X POST "${{ secrets.SUPABASE_FUNCTION_BASE }}/nightly-report" \
+            -H "Authorization: Bearer ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}" \
+            -H "X-Cron-Secret: ${{ secrets.CRON_SECRET }}" \
+            -H "Content-Type: application/json" \
+            -d '{"source":"github-actions"}' \
+            -o /tmp/resp.json -w "HTTP:%{http_code}\n"
+          cat /tmp/resp.json || true
