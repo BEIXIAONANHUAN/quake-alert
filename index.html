@@ -19,9 +19,8 @@
 </head>
 <body>
   <div id="app">
-    <!-- ========== 主应用（单用户，无登录） ========== -->
     <section id="view-main" class="view">
-      <header class="topbar">
+      <header class="topbar" id="topbar">
         <div class="topbar-inner">
           <div class="brand">
             <div class="brand-mark sm">震</div>
@@ -30,18 +29,28 @@
               <div class="brand-sub muted">山梨県甲府市善光寺3-1-5</div>
             </div>
           </div>
-          <nav class="tabs" role="tablist">
-            <button class="tab active" data-tab="dashboard" type="button">仪表盘</button>
-            <button class="tab" data-tab="settings" type="button">设置</button>
-          </nav>
+          <div class="topbar-right">
+            <span class="status-pill" id="top-status-pill">🟢 工作中</span>
+            <button class="btn btn-ghost btn-sm" id="refresh-all" type="button">刷新</button>
+          </div>
         </div>
       </header>
 
-      <!-- 仪表盘 -->
-      <main id="tab-dashboard" class="tab-panel">
-        <!-- 大状态灯 -->
+      <!-- ===== 冬眠极简页（覆盖全站） ===== -->
+      <div id="hibernate-screen" class="hibernate-screen hidden">
+        <div class="hibernate-inner">
+          <div class="hibernate-glyph">😴</div>
+          <h1 class="hibernate-title">冬眠中</h1>
+          <p class="hibernate-desc">监控与推送已全部暂停，今夜不打扰。</p>
+          <button id="wake-btn" class="btn btn-primary btn-lg" type="button">结束冬眠</button>
+        </div>
+      </div>
+
+      <!-- ===== 仪表盘 ===== -->
+      <main id="page-dashboard" class="page active">
+        <!-- 1 状态灯 -->
         <section class="status-hero" id="panel-status">
-          <div class="status-light" id="status-light">
+          <div class="status-light">
             <div class="status-glyph" id="status-glyph">🟢</div>
             <div class="status-text">
               <div class="status-label" id="status-label">工作中</div>
@@ -64,23 +73,68 @@
           </div>
         </section>
 
-        <!-- 最近提醒 -->
+        <!-- 2 最近提醒（仅 2 条） -->
         <section class="panel" id="panel-alerts">
           <div class="panel-head">
             <h2>最近提醒</h2>
-            <button class="btn btn-ghost btn-sm" id="refresh-alerts" type="button">刷新</button>
           </div>
           <div id="alerts-list" class="card-list">
             <div class="empty muted">加载中…</div>
           </div>
+          <button class="btn btn-ghost btn-block link-row" id="goto-history" type="button">查看全部历史 →</button>
         </section>
 
-        <!-- 实时地震 -->
-        <section class="panel" id="panel-quakes">
+        <!-- 3 近30天统计（山梨口径） -->
+        <section class="panel" id="panel-stats">
+          <div class="panel-head">
+            <h2>近 30 天统计</h2>
+            <span class="muted small">山梨有感 · 震度≥1</span>
+          </div>
+          <div class="stats-wrap">
+            <div class="stats-block">
+              <h3 class="stats-title">每日山梨有感地震</h3>
+              <div class="chart-scroll">
+                <div class="bar-chart" id="daily-chart" aria-label="每日山梨有感地震次数"></div>
+              </div>
+            </div>
+            <div class="stats-block">
+              <h3 class="stats-title">震度分布</h3>
+              <div class="hbar-chart" id="shindo-chart" aria-label="山梨震度分布"></div>
+            </div>
+          </div>
+        </section>
+
+        <!-- 4 全国实时入口 -->
+        <button class="entry-card" id="goto-quakes" type="button">
+          <div>
+            <div class="entry-title">查看全国实时地震 →</div>
+            <div class="muted small">最近 20 条 · 标注山梨県震度</div>
+          </div>
+          <div class="entry-arrow">›</div>
+        </button>
+      </main>
+
+      <!-- ===== 预警历史 ===== -->
+      <main id="page-history" class="page">
+        <section class="panel">
+          <div class="panel-head">
+            <h2>预警历史</h2>
+            <button class="btn btn-ghost btn-sm" id="refresh-history" type="button">刷新</button>
+          </div>
+          <div id="history-list" class="card-list">
+            <div class="empty muted">加载中…</div>
+          </div>
+          <button class="btn btn-ghost btn-block link-row" id="load-more-history" type="button">加载更多</button>
+        </section>
+      </main>
+
+      <!-- ===== 实时地震 ===== -->
+      <main id="page-quakes" class="page">
+        <section class="panel">
           <div class="panel-head">
             <h2>实时地震</h2>
             <div class="panel-actions">
-              <span class="muted small">最近 20 条全国地震</span>
+              <span class="muted small">最近 20 条全国</span>
               <button class="btn btn-ghost btn-sm" id="refresh-quakes" type="button">刷新</button>
             </div>
           </div>
@@ -88,34 +142,10 @@
             <div class="empty muted">加载中…</div>
           </div>
         </section>
-
-        <!-- 近30天统计 -->
-        <section class="panel" id="panel-stats">
-          <div class="panel-head">
-            <h2>近 30 天统计</h2>
-            <span class="muted small" id="stats-range">—</span>
-          </div>
-          <div class="stats-wrap">
-            <div class="stats-block">
-              <h3 class="stats-title">每日地震次数</h3>
-              <div class="chart-scroll">
-                <div class="bar-chart" id="daily-chart" aria-label="每日地震次数柱状图"></div>
-              </div>
-              <div class="chart-legend muted small">
-                <span>纵轴：次数</span>
-                <span>横轴：近 30 天（含今天）</span>
-              </div>
-            </div>
-            <div class="stats-block">
-              <h3 class="stats-title">震度分布</h3>
-              <div class="hbar-chart" id="shindo-chart" aria-label="震度分布"></div>
-            </div>
-          </div>
-        </section>
       </main>
 
-      <!-- 设置页 -->
-      <main id="tab-settings" class="tab-panel hidden">
+      <!-- ===== 设置 ===== -->
+      <main id="page-settings" class="page">
         <section class="panel">
           <div class="panel-head">
             <h2>推送设置</h2>
@@ -131,7 +161,7 @@
                 <input type="range" id="min-shindo" min="0" max="7" step="1" value="2" />
                 <div class="slider-value"><span id="min-shindo-val">2</span></div>
               </div>
-              <div class="shindo-scale muted small" id="shindo-scale-labels">
+              <div class="shindo-scale muted small">
                 <span>0</span><span>1</span><span>2</span><span>3</span><span>4</span><span>5</span><span>6</span><span>7</span>
               </div>
             </div>
@@ -183,6 +213,26 @@
     </section>
   </div>
 
+  <!-- 底部导航 -->
+  <nav class="bottom-nav" id="bottom-nav" aria-label="主导航">
+    <button class="nav-item active" data-page="dashboard" type="button">
+      <span class="nav-icon">◎</span>
+      <span class="nav-label">仪表盘</span>
+    </button>
+    <button class="nav-item" data-page="history" type="button">
+      <span class="nav-icon">▤</span>
+      <span class="nav-label">预警历史</span>
+    </button>
+    <button class="nav-item" data-page="quakes" type="button">
+      <span class="nav-icon">≋</span>
+      <span class="nav-label">实时地震</span>
+    </button>
+    <button class="nav-item" data-page="settings" type="button">
+      <span class="nav-icon">⚙</span>
+      <span class="nav-label">设置</span>
+    </button>
+  </nav>
+
   <!-- 确认弹窗 -->
   <div id="modal" class="modal hidden" role="dialog" aria-modal="true">
     <div class="modal-card">
@@ -195,7 +245,6 @@
     </div>
   </div>
 
-  <!-- 轻提示 -->
   <div id="toast" class="toast hidden"></div>
 
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>

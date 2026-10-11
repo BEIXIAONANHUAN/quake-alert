@@ -121,6 +121,7 @@
     setHibernateButton,
     loadSettings,
     confirmDialog,
+    saveHibernation,
     bind() {
       const slider = $("#min-shindo");
       if (slider) {

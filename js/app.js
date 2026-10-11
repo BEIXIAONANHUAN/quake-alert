@@ -1,9 +1,14 @@
 /**
- * 主应用：仪表盘 / 实时地震 / 统计 / 状态灯
+ * 主应用：仪表盘 / 预警历史 / 实时地震 / 设置
+ * 单用户模式（固定 user_id）
  */
 (function () {
   const $ = (sel) => document.querySelector(sel);
   const cfg = window.QUAKE_CONFIG || {};
+  const PAGE_SIZE = 20;
+
+  let historyOffset = 0;
+  let currentAlerts = [];
 
   /* ---------- 工具 ---------- */
   function pad(n) {
@@ -14,7 +19,6 @@
     if (!dateLike) return "—";
     const d = new Date(dateLike);
     if (Number.isNaN(d.getTime())) return String(dateLike);
-    // 固定按日本时间展示（UTC+9）
     const jst = new Date(d.getTime() + 9 * 60 * 60 * 1000);
     return (
       jst.getUTCFullYear() +
@@ -49,27 +53,32 @@
     );
   }
 
-  // P2P maxScale / scale 编码 → 展示震度
-  function scaleText(v) {
-    if (v === null || v === undefined || v === "") return "—";
-    const n = Number(v);
-    if (Number.isNaN(n)) return "—";
-    const map = {
-      0: "0",
-      10: "1",
-      20: "2",
-      30: "3",
-      40: "4",
-      45: "5弱",
-      50: "5強",
-      55: "6弱",
-      60: "6強",
-      70: "7",
-    };
-    return map[n] !== undefined ? map[n] : String(n);
+  /** 剥离 HTML 标签，保留换行，按纯文本展示 */
+  function stripHtml(html) {
+    if (html == null) return "";
+    let s = String(html);
+    // 把常见块级标签转成换行，避免文字粘连
+    s = s.replace(/<\/(div|p|br|li|tr|h[1-6])>/gi, "\n");
+    s = s.replace(/<br\s*\/?>/gi, "\n");
+    s = s.replace(/<[^>]+>/g, "");
+    // 还原常用实体
+    s = s
+      .replace(/&nbsp;/g, " ")
+      .replace(/&amp;/g, "&")
+      .replace(/&lt;/g, "<")
+      .replace(/&gt;/g, ">")
+      .replace(/&quot;/g, '"')
+      .replace(/&#39;/g, "'");
+    // 压缩多余空行
+    s = s
+      .split("\n")
+      .map((line) => line.trim())
+      .filter((line, i, arr) => !(line === "" && (i === 0 || arr[i - 1] === "")))
+      .join("\n")
+      .trim();
+    return s;
   }
 
-  // 用于与「用户下限（0~7）」比较的归一化震度
   function scaleToUser(v) {
     if (v === null || v === undefined || v === "") return -1;
     const n = Number(v);
@@ -86,6 +95,23 @@
     return 0;
   }
 
+  function scaleText(v) {
+    const n = Number(v);
+    const map = {
+      0: "0",
+      10: "1",
+      20: "2",
+      30: "3",
+      40: "4",
+      45: "5弱",
+      50: "5強",
+      55: "6弱",
+      60: "6強",
+      70: "7",
+    };
+    return map[n] !== undefined ? map[n] : v === null || v === undefined ? "—" : String(n);
+  }
+
   function shindoClass(userLevel) {
     if (userLevel >= 5) return "lv5";
     if (userLevel === 4) return "lv4";
@@ -93,6 +119,14 @@
     if (userLevel === 2) return "lv2";
     if (userLevel === 1) return "lv1";
     return "lv0";
+  }
+
+  function escapeHtml(str) {
+    return String(str ?? "")
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;");
   }
 
   function toast(msg, type) {
@@ -105,63 +139,89 @@
     window.__toastTimer = setTimeout(() => el.classList.add("hidden"), 3200);
   }
 
-  function escapeHtml(str) {
-    return String(str ?? "")
-      .replace(/&/g, "&amp;")
-      .replace(/</g, "&lt;")
-      .replace(/>/g, "&gt;")
-      .replace(/"/g, "&quot;");
+  function isDemo() {
+    return new URLSearchParams(location.search).get("demo") === "1";
   }
 
-  /* ---------- 视图切换（单用户，直接进仪表盘） ---------- */
-  function showLogin() {
-    showMain();
-  }
+  /* ---------- 页面导航 ---------- */
+  function showPage(name) {
+    const pages = ["dashboard", "history", "quakes", "settings"];
+    const target = pages.includes(name) ? name : "dashboard";
 
-  function showMain() {
-    $("#view-login")?.classList.add("hidden");
-    $("#view-main")?.classList.remove("hidden");
-  }
-
-  function switchTab(name) {
-    document.querySelectorAll(".tab").forEach((t) => {
-      t.classList.toggle("active", t.dataset.tab === name);
+    document.querySelectorAll(".page").forEach((p) => {
+      p.classList.toggle("active", p.id === "page-" + target);
     });
-    $("#tab-dashboard")?.classList.toggle("hidden", name !== "dashboard");
-    $("#tab-settings")?.classList.toggle("hidden", name !== "settings");
-    if (name === "dashboard") refreshDashboard();
-    if (name === "settings") refreshSettings();
+    document.querySelectorAll(".nav-item").forEach((n) => {
+      n.classList.toggle("active", n.dataset.page === target);
+    });
+
+    if (!isDemo()) {
+      if (target === "dashboard") refreshDashboard();
+      if (target === "history") refreshHistory(true);
+      if (target === "quakes") refreshQuakesPage();
+      if (target === "settings") refreshSettings();
+    }
+    window.scrollTo({ top: 0, behavior: "instant" in window ? "instant" : "auto" });
   }
 
-  /* ---------- 状态灯 ---------- */
-  function applyStatusFromSettings(isHibernating, hasActiveAlert) {
-    const hero = $("#status-hero");
-    const glyph = $("#status-glyph");
-    const label = $("#status-label");
-    const desc = $("#status-desc");
-    if (!hero) return;
+  /* ---------- 冬眠 UI ---------- */
+  function setHibernateUI(isHibernating) {
+    const screen = $("#hibernate-screen");
+    const topbar = $("#topbar");
+    const nav = $("#bottom-nav");
+    const topPill = $("#top-status-pill");
 
-    hero.classList.remove("is-hibernate", "is-alert");
-    if (hasActiveAlert) {
-      hero.classList.add("is-alert");
-      glyph.textContent = "🔴";
-      label.textContent = "当前有活跃警戒";
-      desc.textContent = "检测到緊急地震速報，请注意安全";
-    } else if (isHibernating) {
-      hero.classList.add("is-hibernate");
-      glyph.textContent = "😴";
-      label.textContent = "冬眠中";
-      desc.textContent = "监控与推送已全部暂停";
+    if (isHibernating) {
+      screen?.classList.remove("hidden");
+      topbar?.classList.add("dimmed");
+      nav?.classList.add("dimmed");
+      if (topPill) topPill.textContent = "😴 冬眠中";
+      document.body.classList.add("is-hibernating");
     } else {
-      glyph.textContent = "🟢";
-      label.textContent = "工作中";
-      desc.textContent = "正在监测山梨県地震活动";
+      screen?.classList.add("hidden");
+      topbar?.classList.remove("dimmed");
+      nav?.classList.remove("dimmed");
+      if (topPill) topPill.textContent = "🟢 工作中";
+      document.body.classList.remove("is-hibernating");
     }
     window.QuakeSettings?.setHibernateButton(Boolean(isHibernating));
   }
 
-  /* ---------- 最近提醒 ---------- */
-  // 緊急地震速報 红色置顶，其余按时间倒序
+  function applyStatusFromSettings(isHibernating, hasActiveAlert) {
+    const hero = $("#panel-status");
+    const glyph = $("#status-glyph");
+    const label = $("#status-label");
+    const desc = $("#status-desc");
+    const topPill = $("#top-status-pill");
+
+    if (isHibernating) {
+      setHibernateUI(true);
+      if (hero) hero.classList.add("is-hibernate");
+      if (glyph) glyph.textContent = "😴";
+      if (label) label.textContent = "冬眠中";
+      if (desc) desc.textContent = "监控与推送已全部暂停";
+      return;
+    }
+
+    setHibernateUI(false);
+    if (hero) {
+      hero.classList.remove("is-hibernate", "is-alert");
+      if (hasActiveAlert) hero.classList.add("is-alert");
+    }
+    if (hasActiveAlert) {
+      if (glyph) glyph.textContent = "🔴";
+      if (label) label.textContent = "当前有活跃警戒";
+      if (desc) desc.textContent = "检测到緊急地震速報，请注意安全";
+      if (topPill) topPill.textContent = "🔴 活跃警戒";
+    } else {
+      if (glyph) glyph.textContent = "🟢";
+      if (label) label.textContent = "工作中";
+      if (desc) desc.textContent = "正在监测山梨県地震活动";
+      if (topPill) topPill.textContent = "🟢 工作中";
+    }
+  }
+
+  /* ---------- 提醒列表 ---------- */
   function sortAlerts(list) {
     return (list || []).slice().sort((a, b) => {
       const aEew = a.type === "eew" ? 0 : 1;
@@ -171,51 +231,52 @@
     });
   }
 
-  function renderAlerts(list) {
-    const box = $("#alerts-list");
-    if (!box) return;
-    const rows = sortAlerts(list);
-    if (!rows.length) {
-      box.innerHTML = '<div class="empty muted">暂无提醒记录</div>';
-      return;
-    }
-    box.innerHTML = rows
-      .map((item) => {
-        const isEew = item.type === "eew";
-        const isNightly = item.type === "nightly";
-        const badge = isEew
-          ? '<span class="badge badge-eew">緊急地震速報</span>'
-          : isNightly
-            ? '<span class="badge badge-nightly">夜间汇总</span>'
-            : '<span class="badge badge-quake">有感地震</span>';
-        const cls = isEew ? "card eew" : isNightly ? "card nightly" : "card quiet";
-        return `
-          <article class="${cls}">
-            <div class="card-top">
-              <div class="card-title">${badge}${escapeHtml(item.title || "")}</div>
-              <div class="card-time">${formatJST(item.created_at)}</div>
-            </div>
-            <div class="card-body">${escapeHtml(item.content || "")}</div>
-          </article>
-        `;
-      })
-      .join("");
+  function alertCardHtml(item) {
+    const isEew = item.type === "eew";
+    const isNightly = item.type === "nightly";
+    const badge = isEew
+      ? '<span class="badge badge-eew">緊急地震速報</span>'
+      : isNightly
+        ? '<span class="badge badge-nightly">夜间汇总</span>'
+        : '<span class="badge badge-quake">有感地震</span>';
+    const cls = isEew ? "card eew" : isNightly ? "card nightly" : "card quiet";
+    const text = stripHtml(item.content);
+    return `
+      <article class="${cls}">
+        <div class="card-top">
+          <div class="card-title">${badge}${escapeHtml(item.title || "")}</div>
+          <div class="card-time">${formatJST(item.created_at)}</div>
+        </div>
+        <div class="card-body">${escapeHtml(text)}</div>
+      </article>
+    `;
   }
 
-  async function loadAlerts() {
+  function renderAlertsInto(el, list, emptyText) {
+    if (!el) return;
+    const rows = sortAlerts(list);
+    if (!rows.length) {
+      el.innerHTML = `<div class="empty muted">${escapeHtml(emptyText || "暂无提醒记录")}</div>`;
+      return;
+    }
+    el.innerHTML = rows.map(alertCardHtml).join("");
+  }
+
+  async function loadAlerts(limit, offset) {
     const user = window.QuakeDB.getUser();
     const sb = window.QuakeDB.init();
-    const { data, error } = await sb
+    let q = sb
       .from("alerts")
       .select("id, quake_id, type, title, content, shindo, created_at")
       .eq("user_id", user.id)
       .order("created_at", { ascending: false })
-      .limit(30);
+      .range(offset, offset + limit - 1);
+    const { data, error } = await q;
     if (error) throw error;
     return data || [];
   }
 
-  /* ---------- 实时地震 ---------- */
+  /* ---------- 地震 ---------- */
   function extractYamanashiScale(item) {
     const points = item.points || item.areas || [];
     let max = -1;
@@ -257,8 +318,12 @@
         const hit = yama >= minShindo;
         const pillLv = yama >= 0 ? yama : maxLv;
         const pillText = yama >= 0 ? `山梨 ${yama}` : `最大 ${maxLv < 0 ? "—" : maxLv}`;
-        const when = eq.time || item.time || item.earthquake?.originTime;
-        const status = yama < 0 ? "无山梨观测" : hit ? `<span class="badge badge-hit">达下限</span>` : "未达下限";
+        const when = eq.time || item.time;
+        const status = yama < 0
+          ? "无山梨观测"
+          : hit
+            ? '<span class="badge badge-hit">达下限</span>'
+            : "未达下限";
         return `
           <article class="card ${hit ? "hit quake-hit" : ""}">
             <div class="quake-row">
@@ -278,13 +343,15 @@
   }
 
   async function loadQuakes() {
-    const res = await fetch(cfg.P2P_API || "https://api.p2pquake.net/v2/history?codes=551&codes=556&limit=20");
+    const res = await fetch(
+      cfg.P2P_API || "https://api.p2pquake.net/v2/history?codes=551&codes=556&limit=20"
+    );
     if (!res.ok) throw new Error("地震接口请求失败：" + res.status);
     const raw = await res.json();
     return (raw || []).filter((x) => x.code === 551 || x.code === 556);
   }
 
-  /* ---------- 统计 ---------- */
+  /* ---------- 统计（山梨有感，震度≥1） ---------- */
   function last30Keys() {
     const keys = [];
     const now = new Date();
@@ -292,11 +359,7 @@
       const d = new Date(now.getTime() + 9 * 3600 * 1000);
       d.setUTCDate(d.getUTCDate() - i);
       keys.push(
-        d.getUTCFullYear() +
-          "-" +
-          pad(d.getUTCMonth() + 1) +
-          "-" +
-          pad(d.getUTCDate())
+        d.getUTCFullYear() + "-" + pad(d.getUTCMonth() + 1) + "-" + pad(d.getUTCDate())
       );
     }
     return keys;
@@ -307,11 +370,7 @@
     if (Number.isNaN(d.getTime())) return null;
     const jst = new Date(d.getTime() + 9 * 3600 * 1000);
     return (
-      jst.getUTCFullYear() +
-      "-" +
-      pad(jst.getUTCMonth() + 1) +
-      "-" +
-      pad(jst.getUTCDate())
+      jst.getUTCFullYear() + "-" + pad(jst.getUTCMonth() + 1) + "-" + pad(jst.getUTCDate())
     );
   }
 
@@ -321,13 +380,11 @@
     const keys = last30Keys();
     const vals = keys.map((k) => countMap[k] || 0);
     const max = Math.max(1, ...vals);
-    const range = $("#stats-range");
-    if (range) range.textContent = keys[0] + " ~ " + keys[29];
 
     box.innerHTML = keys
       .map((k, i) => {
         const v = vals[i];
-        const h = Math.max(4, Math.round((v / max) * 110));
+        const h = Math.max(4, Math.round((v / max) * 100));
         const showLabel = i % 5 === 0 || i === keys.length - 1;
         return `
           <div class="bar-col" title="${k}：${v} 次">
@@ -343,16 +400,9 @@
   function renderShindoChart(dist) {
     const box = $("#shindo-chart");
     if (!box) return;
-    const labels = ["0-1", "2", "3", "4", "5+", "6+", "7"];
-    const values = labels.map((_, idx) => {
-      if (idx === 0) return (dist[0] || 0) + (dist[1] || 0);
-      if (idx === 1) return dist[2] || 0;
-      if (idx === 2) return dist[3] || 0;
-      if (idx === 3) return dist[4] || 0;
-      if (idx === 4) return (dist[5] || 0) + (dist[6] || 0);
-      if (idx === 5) return (dist[7] || 0) + (dist[8] || 0);
-      return dist[9] || 0;
-    });
+    // dist: key = 1..7 用户震度
+    const labels = ["1", "2", "3", "4", "5", "6", "7"];
+    const values = labels.map((_, idx) => dist[idx + 1] || 0);
     const max = Math.max(1, ...values);
     box.innerHTML = labels
       .map((lab, i) => {
@@ -361,7 +411,7 @@
         const hot = i >= 3 ? "hot" : "";
         return `
           <div class="hbar-row">
-            <div class="hbar-label">${lab}</div>
+            <div class="hbar-label">震度${lab}</div>
             <div class="hbar-track"><div class="hbar-fill ${hot}" style="width:${pct}%"></div></div>
             <div class="hbar-num">${v}</div>
           </div>
@@ -371,31 +421,34 @@
   }
 
   async function loadStats() {
-    // 用公开 P2P 历史拉近30天：接口 limit 100 足够做展示统计
+    // 拉更多历史做山梨有感统计
     const res = await fetch("https://api.p2pquake.net/v2/history?codes=551&limit=100");
     if (!res.ok) throw new Error("统计接口失败");
-    const raw = await res.json() || [];
+    const raw = (await res.json()) || [];
     const keys = new Set(last30Keys());
     const countMap = {};
     const dist = {};
     for (const item of raw) {
+      const yama = extractYamanashiScale(item);
+      // 口径：山梨県震度 ≥ 1
+      if (yama < 1) continue;
       const k = dayKey(item.time || item.earthquake?.time || item.timestamp?.register);
       if (!k || !keys.has(k)) continue;
       countMap[k] = (countMap[k] || 0) + 1;
-      const lv = extractMaxScale(item);
-      if (lv >= 0) dist[lv] = (dist[lv] || 0) + 1;
+      dist[yama] = (dist[yama] || 0) + 1;
     }
     renderDailyChart(countMap);
     renderShindoChart(dist);
   }
 
-  /* ---------- 设置刷新 ---------- */
+  /* ---------- 刷新入口 ---------- */
   async function refreshSettings() {
     try {
       const s = await window.QuakeSettings.loadSettings();
       if (s) {
         window.QuakeSettings.setSlider(Number(s.min_shindo ?? 2));
         window.QuakeSettings.setHibernateButton(Boolean(s.is_hibernating));
+        if (s.is_hibernating) setHibernateUI(true);
       }
     } catch (err) {
       toast(err.message || "读取设置失败", "err");
@@ -403,7 +456,9 @@
   }
 
   async function refreshDashboard() {
-    $("#meta-updated").textContent = formatJSTFull(new Date());
+    const updated = $("#meta-updated");
+    if (updated) updated.textContent = formatJSTFull(new Date());
+
     let minShindo = 2;
     let isHibernating = false;
     try {
@@ -418,67 +473,129 @@
       /* ignore */
     }
 
-    let alerts = [];
-    try {
-      alerts = await loadAlerts();
-      renderAlerts(alerts);
-      const last = alerts[0];
-      $("#meta-last-push").textContent = last ? formatJST(last.created_at) : "—";
-    } catch (err) {
-      $("#alerts-list").innerHTML = `<div class="empty muted">${escapeHtml(err.message || "加载提醒失败")}</div>`;
+    // 冬眠：直接进入极简页
+    if (isHibernating) {
+      applyStatusFromSettings(true, false);
+      return;
     }
-
-    // 活跃警戒：最近 2 小时内有 eew 记录
-    const recentEew = alerts.find(
-      (a) => a.type === "eew" && Date.now() - new Date(a.created_at).getTime() < 2 * 3600 * 1000
-    );
-    applyStatusFromSettings(isHibernating, Boolean(recentEew));
+    applyStatusFromSettings(false, false);
 
     try {
-      const quakes = await loadQuakes();
-      renderQuakes(quakes, minShindo);
+      currentAlerts = await loadAlerts(30, 0);
+      // 仪表盘只显示 2 条
+      renderAlertsInto($("#alerts-list"), currentAlerts.slice(0, 2), "暂无提醒记录");
+      const last = currentAlerts[0];
+      const lastPush = $("#meta-last-push");
+      if (lastPush) lastPush.textContent = last ? formatJST(last.created_at) : "—";
+
+      const recentEew = currentAlerts.find(
+        (a) => a.type === "eew" && Date.now() - new Date(a.created_at).getTime() < 2 * 3600 * 1000
+      );
+      applyStatusFromSettings(false, Boolean(recentEew));
     } catch (err) {
-      $("#quakes-list").innerHTML = `<div class="empty muted">${escapeHtml(err.message || "加载地震失败")}</div>`;
+      const box = $("#alerts-list");
+      if (box) box.innerHTML = `<div class="empty muted">${escapeHtml(err.message || "加载提醒失败")}</div>`;
     }
 
     try {
       await loadStats();
     } catch (err) {
-      $("#daily-chart").innerHTML = `<div class="empty muted">${escapeHtml(err.message || "统计失败")}</div>`;
+      const box = $("#daily-chart");
+      if (box) box.innerHTML = `<div class="empty muted">${escapeHtml(err.message || "统计失败")}</div>`;
     }
   }
 
-  /* ---------- 演示模式（未接数据库时预览 UI） ---------- */
-  function isDemo() {
-    return new URLSearchParams(location.search).get("demo") === "1";
+  async function refreshHistory(reset) {
+    const box = $("#history-list");
+    const moreBtn = $("#load-more-history");
+    if (reset) {
+      historyOffset = 0;
+      if (box) box.innerHTML = '<div class="empty muted">加载中…</div>';
+    }
+    try {
+      const rows = await loadAlerts(PAGE_SIZE, historyOffset);
+      if (reset) {
+        renderAlertsInto(box, rows, "暂无提醒记录");
+      } else if (box && rows.length) {
+        const frag = sortAlerts(rows).map(alertCardHtml).join("");
+        box.insertAdjacentHTML("beforeend", frag);
+      }
+      historyOffset += rows.length;
+      if (moreBtn) {
+        moreBtn.disabled = rows.length < PAGE_SIZE;
+        moreBtn.textContent = rows.length < PAGE_SIZE ? "没有更多了" : "加载更多";
+      }
+    } catch (err) {
+      if (reset && box) {
+        box.innerHTML = `<div class="empty muted">${escapeHtml(err.message || "加载失败")}</div>`;
+      }
+    }
   }
 
+  async function refreshQuakesPage() {
+    let minShindo = 2;
+    try {
+      const s = await window.QuakeSettings.loadSettings();
+      if (s) minShindo = Number(s.min_shindo ?? 2);
+    } catch (_) {
+      /* ignore */
+    }
+    try {
+      const quakes = await loadQuakes();
+      renderQuakes(quakes, minShindo);
+    } catch (err) {
+      const box = $("#quakes-list");
+      if (box) box.innerHTML = `<div class="empty muted">${escapeHtml(err.message || "加载地震失败")}</div>`;
+    }
+  }
+
+  /* ---------- 演示模式 ---------- */
   function loadDemo() {
-    showMain();
+    const q = new URLSearchParams(location.search);
+    const hib = q.get("hib") === "1";
+    const page = q.get("page") || "dashboard";
+    showPage(page);
+    if (hib) {
+      applyStatusFromSettings(true, false);
+      return;
+    }
     applyStatusFromSettings(false, true);
-    $("#meta-min-shindo").textContent = "2";
-    $("#meta-last-push").textContent = "2026-10-11 21:40";
-    $("#meta-updated").textContent = formatJSTFull(new Date());
-    renderAlerts([
+    const ms = $("#meta-min-shindo");
+    if (ms) ms.textContent = "2";
+    const lp = $("#meta-last-push");
+    if (lp) lp.textContent = "2026-10-11 21:40";
+    const up = $("#meta-updated");
+    if (up) up.textContent = formatJSTFull(new Date());
+
+    currentAlerts = [
       {
         type: "eew",
         title: "地震预警 · 緊急地震速報",
-        content: "地震预警 2026-10-11 21:40:00\n震源地：山梨県東部\n发震时刻：2026/10/11 21:38:12\n震级：M5.2\n山梨県震度：3\n深度：10 km\n强烈摇晃即将到达，立即躲避到桌下",
+        content:
+          "<div><b>地震预警 2026-10-11 21:40:00</b></div><div>震源地：山梨県東部</div><div>发震时刻：2026/10/11 21:38:12</div><div>震级：M5.2</div><div>山梨県震度：3</div><div>深度：10 km</div><div>强烈摇晃即将到达，立即躲避到桌下</div>",
         created_at: new Date().toISOString(),
       },
       {
         type: "quake",
         title: "地震预警 · 山梨震度3地震",
-        content: "地震预警 2026-10-10 08:12:00\n震源地：山梨県中・西部\n震级：M4.1\n山梨県震度：3\n深度：15 km",
+        content:
+          "<div>地震预警 2026-10-10 08:12:00</div><div>震源地：山梨県中・西部</div><div>震级：M4.1</div><div>山梨県震度：3</div><div>深度：15 km</div>",
         created_at: new Date(Date.now() - 86400000).toISOString(),
       },
       {
         type: "nightly",
         title: "地震预警 · 今夜平安",
-        content: "地震预警 夜间汇总 2026-10-10 00:00:00\n监测地点：山梨県 甲府市善光寺3-1-5\n今夜平安，未监测到山梨県相关緊急地震速報或有感地震。",
+        content: "<div>地震预警 夜间汇总 2026-10-10 00:00:00</div><div>监测地点：山梨県 甲府市善光寺3-1-5</div><div>今夜平安，未监测到山梨県相关緊急地震速報或有感地震。</div>",
         created_at: new Date(Date.now() - 2 * 86400000).toISOString(),
       },
-    ]);
+    ];
+    renderAlertsInto($("#alerts-list"), currentAlerts.slice(0, 2), "暂无提醒记录");
+    renderAlertsInto($("#history-list"), currentAlerts, "暂无提醒记录");
+    // showPage 会再调 refresh，demo 下直接填好静态数据即可
+    if (page !== "dashboard") {
+      // already rendered
+    }
+
     renderQuakes(
       [
         {
@@ -499,22 +616,14 @@
           },
           points: [{ pref: "宮崎県", scale: 10 }],
         },
-        {
-          code: 551,
-          earthquake: {
-            time: "2026/10/11 10:12:00",
-            hypocenter: { name: "長野県南部", magnitude: 2.8, depth: 10 },
-            maxScale: 10,
-          },
-          points: [{ pref: "長野県", scale: 10 }],
-        },
       ],
       2
     );
+
     const countMap = {};
-    const dist = { 1: 4, 2: 6, 3: 3, 4: 1 };
+    const dist = { 1: 2, 2: 4, 3: 3, 4: 1 };
     last30Keys().forEach((k, i) => {
-      countMap[k] = i % 7 === 0 ? 4 : i % 3 === 0 ? 2 : i % 2 === 0 ? 1 : 0;
+      countMap[k] = i % 8 === 0 ? 3 : i % 3 === 0 ? 1 : 0;
     });
     renderDailyChart(countMap);
     renderShindoChart(dist);
@@ -525,16 +634,36 @@
     window.QuakeAuth.bind();
     window.QuakeSettings.bind();
 
-    document.querySelectorAll(".tab").forEach((btn) => {
-      btn.addEventListener("click", () => switchTab(btn.dataset.tab));
+    document.querySelectorAll(".nav-item").forEach((btn) => {
+      btn.addEventListener("click", () => showPage(btn.dataset.page));
     });
-    $("#refresh-alerts")?.addEventListener("click", () => {
-      refreshDashboard();
+
+    $("#goto-history")?.addEventListener("click", () => showPage("history"));
+    $("#goto-quakes")?.addEventListener("click", () => showPage("quakes"));
+    $("#refresh-all")?.addEventListener("click", () => {
+      showPage(document.querySelector(".page.active")?.id.replace("page-", "") || "dashboard");
       toast("已刷新", "ok");
     });
-    $("#refresh-quakes")?.addEventListener("click", () => {
-      refreshDashboard();
-      toast("已刷新", "ok");
+    $("#refresh-history")?.addEventListener("click", () => refreshHistory(true));
+    $("#refresh-quakes")?.addEventListener("click", () => refreshQuakesPage());
+    $("#load-more-history")?.addEventListener("click", () => refreshHistory(false));
+
+    $("#wake-btn")?.addEventListener("click", async () => {
+      const ok = await window.QuakeSettings.confirmDialog(
+        "结束冬眠",
+        "结束后将恢复地震监控与推送。确定结束冬眠？"
+      );
+      if (!ok) return;
+      try {
+        await window.QuakeSettings.saveHibernation(false);
+        setHibernateUI(false);
+        applyStatusFromSettings(false, false);
+        toast("已恢复工作中", "ok");
+        showPage("dashboard");
+        refreshSettings();
+      } catch (err) {
+        toast(err.message || "操作失败", "err");
+      }
     });
 
     // PWA
@@ -547,19 +676,18 @@
       return;
     }
 
-    // 单用户模式：直接进入仪表盘
-    showMain();
     await refreshSettings();
-    await refreshDashboard();
+    const page = new URLSearchParams(location.search).get("page");
+    showPage(page || "dashboard");
   }
 
   window.AppUI = {
-    showLogin,
-    showMain,
     toast,
     refreshDashboard,
     applyStatusFromSettings,
-    switchTab,
+    showPage,
+    setHibernateUI,
+    stripHtml,
   };
 
   document.addEventListener("DOMContentLoaded", boot);
