@@ -90,7 +90,8 @@
             <h2>近 30 天统计</h2>
             <span class="muted small">山梨有感 · 震度≥1</span>
           </div>
-          <div class="stats-wrap">
+          <div class="stats-summary muted" id="stats-summary">统计中…</div>
+          <div class="stats-wrap" id="stats-body">
             <div class="stats-block">
               <h3 class="stats-title">每日山梨有感地震</h3>
               <div class="chart-scroll">
@@ -101,6 +102,10 @@
               <h3 class="stats-title">震度分布</h3>
               <div class="hbar-chart" id="shindo-chart" aria-label="山梨震度分布"></div>
             </div>
+          </div>
+          <div class="stats-empty hidden" id="stats-empty">
+            <div class="stats-empty-emoji">🌙</div>
+            <div class="stats-empty-text">近30天山梨无有感地震，一切平静</div>
           </div>
         </section>
 

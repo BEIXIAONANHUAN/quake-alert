@@ -383,33 +383,96 @@
     );
   }
 
-  function renderDailyChart(countMap) {
+  function renderDailyChart(dayStats, minShindo) {
     const box = $("#daily-chart");
     if (!box) return;
     const keys = last30Keys();
-    const vals = keys.map((k) => countMap[k] || 0);
+    const vals = keys.map((k) => (dayStats[k] ? dayStats[k].count : 0));
     const max = Math.max(1, ...vals);
 
     box.innerHTML = keys
       .map((k, i) => {
-        const v = vals[i];
-        const h = Math.max(4, Math.round((v / max) * 100));
-        const showLabel = i % 5 === 0 || i === keys.length - 1;
+        const st = dayStats[k] || { count: 0, maxShindo: -1 };
+        const v = st.count;
+        const h = v ? Math.max(8, Math.round((v / max) * 100)) : 3;
+        const hit = st.maxShindo >= minShindo && v > 0;
+        const isToday = i === keys.length - 1;
+        // 每 5 天标一个；最右端固定「今天」
+        let label = "";
+        if (isToday) label = "今天";
+        else if (i % 5 === 0) label = shortDay(k);
+
+        const tipText = v
+          ? `${longDay(k)} · ${v}次 · 最大震度${st.maxShindo < 0 ? "—" : st.maxShindo}`
+          : `${longDay(k)} · 无有感地震`;
+
         return `
-          <div class="bar-col" title="${k}：${v} 次">
+          <div class="bar-col" data-tip="${escapeHtml(tipText)}" data-day="${k}">
             <div class="bar-val">${v || ""}</div>
-            <div class="bar ${v ? "" : "zero"}" style="height:${h}px"></div>
-            <div class="bar-label">${showLabel ? k.slice(5) : ""}</div>
+            <div class="bar ${v ? (hit ? "hit" : "") : "zero"}" style="height:${h}px"></div>
+            <div class="bar-label ${isToday ? "today" : ""} ${label ? "" : "empty"}">${label}</div>
           </div>
         `;
       })
       .join("");
+
+    bindBarTips(box);
+  }
+
+  function shortDay(k) {
+    // "2026-10-01" -> "10/1"
+    const parts = String(k).split("-");
+    if (parts.length < 3) return k;
+    return `${Number(parts[1])}/${Number(parts[2])}`;
+  }
+
+  function longDay(k) {
+    const parts = String(k).split("-");
+    if (parts.length < 3) return k;
+    return `${Number(parts[1])}月${Number(parts[2])}日`;
+  }
+
+  function bindBarTips(box) {
+    const old = box.querySelector(".chart-tip");
+    if (old) old.remove();
+
+    const showTip = (col) => {
+      hideTip();
+      const tip = document.createElement("div");
+      tip.className = "chart-tip";
+      tip.textContent = col.getAttribute("data-tip") || "";
+      box.appendChild(tip);
+      const colRect = col.getBoundingClientRect();
+      const boxRect = box.getBoundingClientRect();
+      tip.style.left = colRect.left - boxRect.left + colRect.width / 2 + "px";
+      tip.style.top = colRect.top - boxRect.top + "px";
+      col.classList.add("active");
+      box.__tipCol = col;
+    };
+    const hideTip = () => {
+      const t = box.querySelector(".chart-tip");
+      if (t) t.remove();
+      if (box.__tipCol) {
+        box.__tipCol.classList.remove("active");
+        box.__tipCol = null;
+      }
+    };
+
+    box.querySelectorAll(".bar-col").forEach((col) => {
+      col.addEventListener("mouseenter", () => showTip(col));
+      col.addEventListener("mouseleave", hideTip);
+      col.addEventListener("click", (e) => {
+        e.stopPropagation();
+        if (box.__tipCol === col) hideTip();
+        else showTip(col);
+      });
+    });
+    box.addEventListener("mouseleave", hideTip);
   }
 
   function renderShindoChart(dist) {
     const box = $("#shindo-chart");
     if (!box) return;
-    // dist: key = 1..7 用户震度
     const labels = ["1", "2", "3", "4", "5", "6", "7"];
     const values = labels.map((_, idx) => dist[idx + 1] || 0);
     const max = Math.max(1, ...values);
@@ -429,15 +492,27 @@
       .join("");
   }
 
-  async function loadStats() {
-    // 翻页拉满近 30 天，避免 limit=100 截断
+  function renderStatsSummary(total, maxShindo, minShindo) {
+    const el = $("#stats-summary");
+    if (!el) return;
+    if (!total) {
+      el.innerHTML = "近 30 天山梨有感地震：<strong>0</strong> 次";
+      return;
+    }
+    el.innerHTML = `近30天共 <strong>${total}</strong> 次有感 · 最大震度 <strong>${maxShindo}</strong> · 高亮阈值震度${minShindo}`;
+  }
+
+  async function loadStats(minShindo) {
+    const threshold = Number(minShindo ?? 2);
     const keys = new Set(last30Keys());
-    const countMap = {};
+    const dayStats = {};
     const dist = {};
+    let total = 0;
+    let maxShindo = -1;
+
     const pageSize = 100;
     let offset = 0;
     let keepGoing = true;
-    let oldest = null;
 
     while (keepGoing && offset < 1000) {
       const url =
@@ -454,27 +529,37 @@
         const when = item.time || item.earthquake?.time || item.timestamp?.register;
         const k = dayKey(when);
         if (!k) continue;
-        oldest = oldest && oldest < k ? oldest : k;
         if (!keys.has(k)) continue;
         const yama = extractYamanashiScale(item);
         // 口径：山梨県震度 ≥ 1
         if (yama < 1) continue;
-        countMap[k] = (countMap[k] || 0) + 1;
+        if (!dayStats[k]) dayStats[k] = { count: 0, maxShindo: -1 };
+        dayStats[k].count += 1;
+        if (yama > dayStats[k].maxShindo) dayStats[k].maxShindo = yama;
+        if (yama > maxShindo) maxShindo = yama;
         dist[yama] = (dist[yama] || 0) + 1;
+        total += 1;
       }
 
-      // 本页最旧一天已早于 30 天窗口，或不足一页则停
-      const firstDay = dayKey(raw[0]?.time || raw[0]?.earthquake?.time);
-      const lastDay = dayKey(
-        raw[raw.length - 1]?.time || raw[raw.length - 1]?.earthquake?.time
-      );
+      const lastDay = dayKey(raw[raw.length - 1]?.time || raw[raw.length - 1]?.earthquake?.time);
       const oldestKey = [...keys].sort()[0];
       if (lastDay && lastDay < oldestKey) keepGoing = false;
       if (raw.length < pageSize) keepGoing = false;
       offset += pageSize;
     }
 
-    renderDailyChart(countMap);
+    const body = $("#stats-body");
+    const empty = $("#stats-empty");
+    if (!total) {
+      if (body) body.classList.add("hidden");
+      if (empty) empty.classList.remove("hidden");
+      renderStatsSummary(0, -1, threshold);
+      return;
+    }
+    if (body) body.classList.remove("hidden");
+    if (empty) empty.classList.add("hidden");
+    renderStatsSummary(total, maxShindo, threshold);
+    renderDailyChart(dayStats, threshold);
     renderShindoChart(dist);
   }
 
@@ -535,7 +620,7 @@
     }
 
     try {
-      await loadStats();
+      await loadStats(minShindo);
     } catch (err) {
       const box = $("#daily-chart");
       if (box) box.innerHTML = `<div class="empty muted">${escapeHtml(err.message || "统计失败")}</div>`;
@@ -657,12 +742,15 @@
       2
     );
 
-    const countMap = {};
+    const dayStats = {};
     const dist = { 1: 2, 2: 4, 3: 3, 4: 1 };
     last30Keys().forEach((k, i) => {
-      countMap[k] = i % 8 === 0 ? 3 : i % 3 === 0 ? 1 : 0;
+      const c = i % 8 === 0 ? 3 : i % 3 === 0 ? 1 : 0;
+      if (c) dayStats[k] = { count: c, maxShindo: i % 8 === 0 ? 3 : 2 };
     });
-    renderDailyChart(countMap);
+    const total = Object.values(dayStats).reduce((s, x) => s + x.count, 0);
+    renderStatsSummary(total, 3, 2);
+    renderDailyChart(dayStats, 2);
     renderShindoChart(dist);
   }
 

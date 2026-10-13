@@ -21,3 +21,5 @@ supabase/.branches/
 # 本地截图/调试产物
 output/
 .playwright-cli/
+
+serve.js

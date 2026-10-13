@@ -650,6 +650,7 @@ body.is-hibernating {
   overflow-y: hidden;
   -webkit-overflow-scrolling: touch;
   padding-bottom: 4px;
+  padding-right: 18px;
   width: 100%;
   min-width: 0;
   max-width: 100%;
@@ -670,7 +671,8 @@ body.is-hibernating {
   flex-direction: column;
   align-items: center;
   gap: 4px;
-  overflow: hidden;
+  overflow: visible;
+  position: relative;
 }
 .bar {
   width: 100%;
@@ -735,6 +737,118 @@ body.is-hibernating {
   font-family: var(--mono);
   text-align: right;
   color: var(--ink);
+}
+
+/* ---------- 统计卡片增强 ---------- */
+.stats-summary {
+  font-size: 13px;
+  margin: -4px 0 12px;
+  color: var(--ink-muted);
+}
+.stats-summary strong {
+  color: var(--ink);
+  font-weight: 700;
+}
+
+.bar-chart {
+  position: relative;
+  align-items: flex-end;
+  gap: 3px;
+  min-height: 150px;
+  width: 100%;
+  min-width: 0;
+  padding: 28px 22px 28px 2px;
+}
+.bar-col {
+  cursor: pointer;
+  overflow: visible;
+  position: relative;
+}
+.bar {
+  width: 100%;
+  min-height: 3px;
+  border-radius: 3px 3px 1px 1px;
+  background: linear-gradient(180deg, var(--accent), rgba(255, 107, 53, 0.45));
+  transition: filter .15s ease, transform .15s ease;
+}
+.bar.zero {
+  background: rgba(232, 238, 245, 0.08);
+  min-height: 3px;
+}
+/* 达到推送下限：加粗 + 琥珀发光 */
+.bar.hit {
+  background: linear-gradient(180deg, #ffb547, #ff8f2e);
+  box-shadow:
+    0 0 0 1.5px rgba(255, 181, 71, 0.95),
+    0 0 12px rgba(255, 170, 60, 0.55);
+  transform: scaleX(1.18);
+  min-height: 6px;
+}
+.bar-col:hover .bar,
+.bar-col.active .bar {
+  filter: brightness(1.15);
+}
+.bar-val {
+  font-size: 10px;
+  color: var(--ink-muted);
+  font-family: var(--mono);
+  margin-bottom: 2px;
+}
+.bar-label {
+  position: absolute;
+  left: 50%;
+  bottom: -22px;
+  transform: translateX(-50%);
+  font-size: 12px;
+  color: var(--ink-muted);
+  font-family: var(--mono);
+  white-space: nowrap;
+  height: 18px;
+  line-height: 18px;
+  width: max-content;
+  pointer-events: none;
+}
+.bar-label.today {
+  color: var(--accent);
+  font-weight: 700;
+}
+.bar-label.empty {
+  visibility: hidden;
+}
+
+.chart-tip {
+  position: absolute;
+  z-index: 5;
+  pointer-events: none;
+  background: #1b2733;
+  border: 1px solid rgba(255, 181, 71, 0.35);
+  color: var(--ink);
+  font-size: 12px;
+  padding: 6px 10px;
+  border-radius: 8px;
+  white-space: nowrap;
+  transform: translate(-50%, -120%);
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.35);
+}
+.chart-tip .tip-strong {
+  color: #ffb547;
+  font-weight: 700;
+}
+
+.stats-empty {
+  text-align: center;
+  padding: 36px 16px 28px;
+}
+.stats-empty-emoji {
+  font-size: 42px;
+  margin-bottom: 12px;
+}
+.stats-empty-text {
+  font-size: 18px;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  color: var(--ink);
+  line-height: 1.5;
 }
 
 /* ---------- 设置 ---------- */
@@ -834,6 +948,12 @@ input[type="range"] {
 
 /* ---------- 桌面 ---------- */
 @media (min-width: 860px) {
+  .bar-chart {
+    gap: 5px;
+  }
+  .bar-label {
+    font-size: 12px;
+  }
   .topbar-inner {
     grid-template-columns: 1fr auto;
   }
