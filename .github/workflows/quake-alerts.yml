@@ -1,11 +1,19 @@
 # 地震预警 · 定时触发 Edge Function
-# 每 5 分钟实时监控；每天 15:00 UTC（日本 0 点）夜间汇总
+# 监控：每 5 分钟
+# 夜报：日本时间错峰（UTC 14:53 / 15:12 / 16:37 / 17:21 / 18:48）
+#       ≈ 日本 23:53、次日 0:12、1:37、2:21、3:48
+#       函数内用「20 小时窗口」去重，哪班先跑到哪班发，其余自动跳过
 name: Quake Alerts Cron
 
 on:
   schedule:
     - cron: "*/5 * * * *"   # 每 5 分钟实时监控
-    - cron: "0 15 * * *"    # UTC 15:00 = 日本时间 00:00 夜间汇总
+    # 夜间汇总错峰（UTC）
+    - cron: "53 14 * * *"   # 日本 23:53
+    - cron: "12 15 * * *"   # 日本 0:12
+    - cron: "37 16 * * *"   # 日本 1:37
+    - cron: "21 17 * * *"   # 日本 2:21
+    - cron: "48 18 * * *"   # 日本 3:48
   workflow_dispatch:
     inputs:
       job:
@@ -26,9 +34,9 @@ jobs:
   monitor:
     name: 实时监控
     if: >
-      github.event_name == 'workflow_dispatch' &&
-      (github.event.inputs.job == 'monitor' || github.event.inputs.job == 'both')
-      || github.event_name == 'schedule' && github.event.schedule == '*/5 * * * *'
+      (github.event_name == 'workflow_dispatch' &&
+        (github.event.inputs.job == 'monitor' || github.event.inputs.job == 'both'))
+      || (github.event_name == 'schedule' && github.event.schedule == '*/5 * * * *')
     runs-on: ubuntu-latest
     steps:
       - name: 调用 quake-monitor
@@ -44,9 +52,15 @@ jobs:
   nightly:
     name: 夜间汇总
     if: >
-      github.event_name == 'workflow_dispatch' &&
-      (github.event.inputs.job == 'nightly' || github.event.inputs.job == 'both')
-      || github.event_name == 'schedule' && github.event.schedule == '0 15 * * *'
+      (github.event_name == 'workflow_dispatch' &&
+        (github.event.inputs.job == 'nightly' || github.event.inputs.job == 'both'))
+      || (github.event_name == 'schedule' && (
+           github.event.schedule == '53 14 * * *' ||
+           github.event.schedule == '12 15 * * *' ||
+           github.event.schedule == '37 16 * * *' ||
+           github.event.schedule == '21 17 * * *' ||
+           github.event.schedule == '48 18 * * *'
+         ))
     runs-on: ubuntu-latest
     steps:
       - name: 调用 nightly-report

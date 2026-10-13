@@ -44,6 +44,37 @@ function userLevelToText(lv: number): string {
   return String(lv);
 }
 
+/** 完整震度文案：5弱/5強、6弱/6強 */
+function scaleLabel(v: unknown): string {
+  const n = Number(v);
+  const map: Record<number, string> = {
+    0: "0",
+    10: "1",
+    20: "2",
+    30: "3",
+    40: "4",
+    45: "5弱",
+    50: "5強",
+    55: "6弱",
+    60: "6強",
+    70: "7",
+  };
+  if (map[n] !== undefined) return map[n];
+  const lv = scaleToUser(v);
+  return lv < 0 ? "—" : String(lv);
+}
+
+/** 事件键：震源名 + 发震时刻(到分钟) + 震级，归并初报/续报 */
+function eventKey(item: any): string {
+  const eq = item?.earthquake || {};
+  const hypo = eq?.hypocenter || {};
+  const when = String(eq?.time || item?.time || "");
+  const minute = when.replace(/\//g, "-").slice(0, 16); // YYYY-MM-DD HH:mm
+  const name = String(hypo?.name || "unknown");
+  const mag = hypo?.magnitude ?? "na";
+  return `eq-${name}-${minute}-M${mag}`;
+}
+
 function nowJstString(): string {
   const d = new Date(Date.now() + 9 * 3600 * 1000);
   const p = (x: number) => String(x).padStart(2, "0");
@@ -96,6 +127,20 @@ function extractYamanashiScale(item: any): number {
   return max;
 }
 
+/** 山梨 raw scale（45/50/55…），用于 5弱/5強 文案 */
+function extractYamanashiRawScale(item: any): number {
+  const points: any[] = item?.points || item?.areas || [];
+  let max = -1;
+  for (const p of points) {
+    const pref = String(p?.pref || "");
+    if (pref.includes("山梨")) {
+      const s = Number(p?.scale ?? p?.scaleFrom ?? p?.maxScale);
+      if (!Number.isNaN(s) && s > max) max = s;
+    }
+  }
+  return max;
+}
+
 function eewIncludesYamanashi(item: any): boolean {
   const areas: any[] = item?.areas || item?.points || [];
   for (const a of areas) {
@@ -114,11 +159,12 @@ function quakeDetailHtml(item: any, yamaLv: number): string {
   const mag = hypo?.magnitude ?? "—";
   const depth = hypo?.depth ?? "—";
   const name = hypo?.name || "震源不明";
+  const shindoText = yamaLv < 0 ? "无观测" : scaleLabel(extractYamanashiRawScale(item));
   return [
     `<div>震源地：${name}</div>`,
     `<div>发震时刻：${when}</div>`,
     `<div>震级：M${mag}</div>`,
-    `<div>山梨県震度：${userLevelToText(yamaLv)}</div>`,
+    `<div>山梨県震度：${shindoText}</div>`,
     `<div>深度：${depth} km</div>`,
   ].join("");
 }
@@ -180,7 +226,8 @@ Deno.serve(async (req) => {
   for (const item of items) {
     const code = item?.code;
     if (code !== 551 && code !== 556) continue;
-    const quakeId = String(item?.id || item?.earthquake?.time || item?.time || "");
+    // 事件键去重：震源名+发震时刻(分钟)+震级，初报/续报只推一次
+    const quakeId = eventKey(item);
 
     // EEW（556）：警报地区含山梨 → 立即推
     if (code === 556) {
@@ -225,7 +272,7 @@ Deno.serve(async (req) => {
       if (yamaLv < 0) continue;
       if (yamaLv < min) continue;
 
-      const title = `地震预警 · 山梨震度${yamaLv}地震`;
+      const title = `地震预警 · 山梨震度${scaleLabel(extractYamanashiRawScale(item))}地震`;
       const content =
         `<div><b>地震预警 ${nowJstString()}</b></div>` +
         quakeDetailHtml(item, yamaLv);

@@ -95,6 +95,7 @@
     return 0;
   }
 
+  /** 完整震度文案（5弱/5強、6弱/6強） */
   function scaleText(v) {
     const n = Number(v);
     const map = {
@@ -109,7 +110,9 @@
       60: "6強",
       70: "7",
     };
-    return map[n] !== undefined ? map[n] : v === null || v === undefined ? "—" : String(n);
+    if (map[n] !== undefined) return map[n];
+    const lv = scaleToUser(v);
+    return lv < 0 ? "—" : String(lv);
   }
 
   function shindoClass(userLevel) {
@@ -299,6 +302,20 @@
     return max;
   }
 
+  /** 山梨 raw scale（10/20/…/45/50/55…），用于 5弱/5強 文案 */
+  function extractYamanashiRawScale(item) {
+    const points = item.points || item.areas || [];
+    let max = -1;
+    for (const p of points) {
+      const pref = p.pref || "";
+      if (pref.includes("山梨")) {
+        const s = Number(p.scale ?? p.scaleFrom ?? p.maxScale);
+        if (!Number.isNaN(s) && s > max) max = s;
+      }
+    }
+    return max;
+  }
+
   function extractMaxScale(item) {
     const eq = item.earthquake || {};
     if (eq.maxScale !== undefined && eq.maxScale !== null) return scaleToUser(eq.maxScale);
@@ -323,10 +340,12 @@
         const eq = item.earthquake || {};
         const hypo = eq.hypocenter || {};
         const yama = extractYamanashiScale(item);
+        const yamaRaw = extractYamanashiRawScale(item);
         const maxLv = extractMaxScale(item);
         const hit = yama >= minShindo;
         const pillLv = yama >= 0 ? yama : maxLv;
-        const pillText = yama >= 0 ? `山梨 ${yama}` : `最大 ${maxLv < 0 ? "—" : maxLv}`;
+        const pillText =
+          yama >= 0 ? `山梨 ${scaleText(yamaRaw)}` : `最大 ${maxLv < 0 ? "—" : maxLv}`;
         const when = eq.time || item.time;
         const status = yama < 0
           ? "无山梨观测"
@@ -403,7 +422,7 @@
         else if (i % 5 === 0) label = shortDay(k);
 
         const tipText = v
-          ? `${longDay(k)} · ${v}次 · 最大震度${st.maxShindo < 0 ? "—" : st.maxShindo}`
+          ? `${longDay(k)} · ${v}次 · 最大震度${st.maxRaw > 0 ? scaleText(st.maxRaw) : st.maxShindo < 0 ? "—" : st.maxShindo}`
           : `${longDay(k)} · 无有感地震`;
 
         return `
@@ -473,17 +492,28 @@
   function renderShindoChart(dist) {
     const box = $("#shindo-chart");
     if (!box) return;
-    const labels = ["1", "2", "3", "4", "5", "6", "7"];
-    const values = labels.map((_, idx) => dist[idx + 1] || 0);
+    // dist key = raw scale (10/20/30/40/45/50/55/60/70)
+    const rows = [
+      { raw: 10, label: "震度1" },
+      { raw: 20, label: "震度2" },
+      { raw: 30, label: "震度3" },
+      { raw: 40, label: "震度4" },
+      { raw: 45, label: "震度5弱" },
+      { raw: 50, label: "震度5強" },
+      { raw: 55, label: "震度6弱" },
+      { raw: 60, label: "震度6強" },
+      { raw: 70, label: "震度7" },
+    ];
+    const values = rows.map((r) => dist[r.raw] || 0);
     const max = Math.max(1, ...values);
-    box.innerHTML = labels
-      .map((lab, i) => {
+    box.innerHTML = rows
+      .map((r, i) => {
         const v = values[i];
         const pct = Math.round((v / max) * 100);
-        const hot = i >= 3 ? "hot" : "";
+        const hot = i >= 4 ? "hot" : "";
         return `
           <div class="hbar-row">
-            <div class="hbar-label">震度${lab}</div>
+            <div class="hbar-label">${r.label}</div>
             <div class="hbar-track"><div class="hbar-fill ${hot}" style="width:${pct}%"></div></div>
             <div class="hbar-num">${v}</div>
           </div>
@@ -492,14 +522,15 @@
       .join("");
   }
 
-  function renderStatsSummary(total, maxShindo, minShindo) {
+  function renderStatsSummary(total, maxShindo, maxRaw, minShindo) {
     const el = $("#stats-summary");
     if (!el) return;
     if (!total) {
       el.innerHTML = "近 30 天山梨有感地震：<strong>0</strong> 次";
       return;
     }
-    el.innerHTML = `近30天共 <strong>${total}</strong> 次有感 · 最大震度 <strong>${maxShindo}</strong> · 高亮阈值震度${minShindo}`;
+    const maxText = maxRaw > 0 ? scaleText(maxRaw) : maxShindo < 0 ? "—" : String(maxShindo);
+    el.innerHTML = `近30天共 <strong>${total}</strong> 次有感 · 最大震度 <strong>${maxText}</strong> · 高亮阈值震度${minShindo}`;
   }
 
   async function loadStats(minShindo) {
@@ -509,6 +540,7 @@
     const dist = {};
     let total = 0;
     let maxShindo = -1;
+    let maxRaw = -1;
 
     const pageSize = 100;
     let offset = 0;
@@ -533,11 +565,14 @@
         const yama = extractYamanashiScale(item);
         // 口径：山梨県震度 ≥ 1
         if (yama < 1) continue;
-        if (!dayStats[k]) dayStats[k] = { count: 0, maxShindo: -1 };
+        const raw = extractYamanashiRawScale(item);
+        if (!dayStats[k]) dayStats[k] = { count: 0, maxShindo: -1, maxRaw: -1 };
         dayStats[k].count += 1;
         if (yama > dayStats[k].maxShindo) dayStats[k].maxShindo = yama;
+        if (raw > (dayStats[k].maxRaw ?? -1)) dayStats[k].maxRaw = raw;
         if (yama > maxShindo) maxShindo = yama;
-        dist[yama] = (dist[yama] || 0) + 1;
+        if (raw > maxRaw) maxRaw = raw;
+        dist[raw] = (dist[raw] || 0) + 1;
         total += 1;
       }
 
@@ -553,12 +588,12 @@
     if (!total) {
       if (body) body.classList.add("hidden");
       if (empty) empty.classList.remove("hidden");
-      renderStatsSummary(0, -1, threshold);
+      renderStatsSummary(0, -1, -1, threshold);
       return;
     }
     if (body) body.classList.remove("hidden");
     if (empty) empty.classList.add("hidden");
-    renderStatsSummary(total, maxShindo, threshold);
+    renderStatsSummary(total, maxShindo, maxRaw, threshold);
     renderDailyChart(dayStats, threshold);
     renderShindoChart(dist);
   }
@@ -743,13 +778,17 @@
     );
 
     const dayStats = {};
-    const dist = { 1: 2, 2: 4, 3: 3, 4: 1 };
+    const dist = { 10: 2, 20: 4, 30: 3, 45: 1, 50: 1 };
     last30Keys().forEach((k, i) => {
       const c = i % 8 === 0 ? 3 : i % 3 === 0 ? 1 : 0;
-      if (c) dayStats[k] = { count: c, maxShindo: i % 8 === 0 ? 3 : 2 };
+      if (c) dayStats[k] = {
+        count: c,
+        maxShindo: i % 8 === 0 ? 3 : 2,
+        maxRaw: i % 8 === 0 ? 30 : 20,
+      };
     });
     const total = Object.values(dayStats).reduce((s, x) => s + x.count, 0);
-    renderStatsSummary(total, 3, 2);
+    renderStatsSummary(total, 3, 30, 2);
     renderDailyChart(dayStats, 2);
     renderShindoChart(dist);
   }

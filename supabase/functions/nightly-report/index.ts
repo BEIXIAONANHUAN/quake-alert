@@ -27,6 +27,18 @@ function scaleToUser(v: unknown): number {
   return 0;
 }
 
+/** 完整震度文案 */
+function scaleLabel(v: unknown): string {
+  const n = Number(v);
+  const map: Record<number, string> = {
+    0: "0", 10: "1", 20: "2", 30: "3", 40: "4",
+    45: "5弱", 50: "5強", 55: "6弱", 60: "6強", 70: "7",
+  };
+  if (map[n] !== undefined) return map[n];
+  const lv = scaleToUser(v);
+  return lv < 0 ? "—" : String(lv);
+}
+
 function nowJstString(): string {
   const d = new Date(Date.now() + 9 * 3600 * 1000);
   const p = (x: number) => String(x).padStart(2, "0");
@@ -70,6 +82,18 @@ function extractYamanashiScale(item: any): number {
     if (String(p?.pref || "").includes("山梨")) {
       const s = scaleToUser(p?.scale ?? p?.scaleFrom ?? p?.maxScale);
       if (s > max) max = s;
+    }
+  }
+  return max;
+}
+
+function extractYamanashiRawScale(item: any): number {
+  const points: any[] = item?.points || item?.areas || [];
+  let max = -1;
+  for (const p of points) {
+    if (String(p?.pref || "").includes("山梨")) {
+      const s = Number(p?.scale ?? p?.scaleFrom ?? p?.maxScale);
+      if (!Number.isNaN(s) && s > max) max = s;
     }
   }
   return max;
@@ -139,7 +163,7 @@ Deno.serve(async (req) => {
     }
     if (item?.code === 551) {
       const lv = extractYamanashiScale(item);
-      if (lv >= 0) yamaList.push({ item, lv });
+      if (lv >= 0) yamaList.push({ item, lv, raw: extractYamanashiRawScale(item) });
     }
   }
 
@@ -164,7 +188,7 @@ Deno.serve(async (req) => {
       for (const y of yamaList.slice(0, 8)) {
         const eq = y.item?.earthquake || {};
         lines.push(
-          `<div>· ${eq?.hypocenter?.name || "—"} 震度${y.lv} M${eq?.hypocenter?.magnitude ?? "—"} ${eq?.time || ""}</div>`
+          `<div>· ${eq?.hypocenter?.name || "—"} 震度${scaleLabel(y.raw)} M${eq?.hypocenter?.magnitude ?? "—"} ${eq?.time || ""}</div>`
         );
       }
     }
@@ -177,31 +201,46 @@ Deno.serve(async (req) => {
     : "地震预警 · 今夜平安";
 
   const actions: any[] = [];
-  const dayKey = jstDateKey(0);
+  // 时间窗口去重：20 小时内发过 type=nightly 就跳过（错峰 cron 幂等）
+  const WINDOW_HOURS = 20;
+  const windowStart = new Date(Date.now() - WINDOW_HOURS * 3600 * 1000).toISOString();
 
   for (const u of activeUsers) {
-    const dup = await admin
+    const { data: recent, error: recentErr } = await admin
       .from("alerts")
-      .select("id")
+      .select("id, created_at, quake_id")
       .eq("user_id", u.user_id)
-      .eq("quake_id", `nightly-${dayKey}`)
       .eq("type", "nightly")
+      .gte("created_at", windowStart)
+      .order("created_at", { ascending: false })
+      .limit(1)
       .maybeSingle();
-    if (dup.data) {
-      actions.push({ user: u.user_id, skipped: true });
+    if (recentErr) {
+      actions.push({ user: u.user_id, skipped: true, error: recentErr.message });
       continue;
     }
+    if (recent) {
+      actions.push({
+        user: u.user_id,
+        skipped: true,
+        reason: `within ${WINDOW_HOURS}h`,
+        last_at: recent.created_at,
+      });
+      continue;
+    }
+
     let pushed = false;
     if (pushToken) pushed = await sendPushPlus(pushToken, title, content);
+    const quakeId = `nightly-${Date.now()}`;
     await admin.from("alerts").upsert({
       user_id: u.user_id,
-      quake_id: `nightly-${dayKey}`,
+      quake_id: quakeId,
       type: "nightly",
       title,
       content,
       shindo: null,
     }, { onConflict: "user_id,quake_id,type" });
-    actions.push({ user: u.user_id, pushed, title });
+    actions.push({ user: u.user_id, pushed, title, quake_id: quakeId });
   }
 
   return json({
