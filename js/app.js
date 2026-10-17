@@ -328,6 +328,109 @@
     return max;
   }
 
+  /* ---------- 未知值 / 异常值 / 事件合并 ---------- */
+  const MAG_ABNORMAL = 9.5;
+
+  function formatMag(mag) {
+    if (mag === null || mag === undefined || mag === "") return "—";
+    const n = Number(mag);
+    if (Number.isNaN(n)) return "—";
+    if (n > MAG_ABNORMAL) return `M${n}`;
+    return `M${n}`;
+  }
+
+  function formatDepth(depth) {
+    if (depth === null || depth === undefined || depth === "") return "不明";
+    const n = Number(depth);
+    if (Number.isNaN(n)) return "不明";
+    if (n < 0) return "不明";
+    return `${n}km`;
+  }
+
+  function formatDepthDisplay(depth) {
+    const t = formatDepth(depth);
+    return t === "不明" ? "深度不明" : `深${t}`;
+  }
+
+  function formatName(name) {
+    const s = String(name || "").trim();
+    return s || "震源不明";
+  }
+
+  function isAbnormalMag(mag) {
+    const n = Number(mag);
+    return !Number.isNaN(n) && n > MAG_ABNORMAL;
+  }
+
+  function isUnknownMag(mag) {
+    return mag === null || mag === undefined || mag === "" || Number.isNaN(Number(mag));
+  }
+
+  /** 发震时刻 → ms（本地解析 "2026/10/16 12:38:00"） */
+  function parseQuakeTime(item) {
+    const eq = item?.earthquake || {};
+    const raw = eq.time || item?.time;
+    if (!raw) return NaN;
+    const s = String(raw).replace(/\//g, "-").replace("T", " ");
+    // "2026-10-16 12:38:00" or with .xxx
+    const d = new Date(s.replace(" ", "T") + (String(s).includes("Z") ? "" : ""));
+    if (!Number.isNaN(d.getTime())) return d.getTime();
+    return new Date(String(raw).replace(/\//g, "-")).getTime();
+  }
+
+  /** 报文完整度评分：越高越优先展示 */
+  function quakeScore(item) {
+    const eq = item?.earthquake || {};
+    const h = eq?.hypocenter || {};
+    const name = String(h?.name || "").trim();
+    const mag = h?.magnitude;
+    const depth = h?.depth;
+    const points = (item?.points || item?.areas || []).length;
+    let score = 0;
+    if (name && name !== "震源不明") score += 50;
+    if (!isUnknownMag(mag) && !isAbnormalMag(mag)) score += 40;
+    else if (!isUnknownMag(mag)) score += 10;
+    if (depth !== null && depth !== undefined && Number(depth) >= 0) score += 15;
+    if (item?.code === 551) score += 20; // 正式地震情报优于 EEW 初报
+    if (eq?.maxScale != null) score += 5;
+    score += Math.min(points, 30);
+    // 略偏新报
+    const t = parseQuakeTime(item);
+    if (!Number.isNaN(t)) score += Math.min(5, t / 1e15);
+    return score;
+  }
+
+  /**
+   * 合并同一事件：发震时刻 ±windowMin 分钟内归为一组
+   * 每组只保留最完整的一条
+   */
+  function mergeQuakes(items, windowMin) {
+    const windowMs = (windowMin ?? 10) * 60 * 1000;
+    const list = (items || [])
+      .map((item) => ({ item, t: parseQuakeTime(item), score: quakeScore(item) }))
+      .filter((x) => !Number.isNaN(x.t))
+      .sort((a, b) => b.t - a.t); // 新→旧
+
+    const kept = [];
+    for (const cand of list) {
+      const dup = kept.find((k) => Math.abs(k.t - cand.t) <= windowMs);
+      if (!dup) {
+        kept.push(cand);
+        continue;
+      }
+      // 已有代表条 vs 候选：保留更完整；同分取更新
+      if (
+        cand.score > dup.score ||
+        (cand.score === dup.score && cand.t > dup.t)
+      ) {
+        dup.item = cand.item;
+        dup.t = cand.t;
+        dup.score = cand.score;
+      }
+    }
+    return kept.map((k) => k.item);
+  }
+
   function renderQuakes(list, minShindo) {
     const box = $("#quakes-list");
     if (!box) return;
@@ -347,18 +450,25 @@
         const pillText =
           yama >= 0 ? `山梨 ${scaleText(yamaRaw)}` : `最大 ${maxLv < 0 ? "—" : maxLv}`;
         const when = eq.time || item.time;
-        const status = yama < 0
-          ? "无山梨观测"
-          : hit
-            ? '<span class="badge badge-hit">达下限</span>'
-            : "未达下限";
+
+        const nameText = formatName(hypo.name);
+        const magText = formatMag(hypo.magnitude);
+        const abnormal = isAbnormalMag(hypo.magnitude);
+        const magSuffix = abnormal ? "（初报推算中）" : "";
+        const status =
+          yama < 0
+            ? "无山梨观测"
+            : hit
+              ? '<span class="badge badge-hit">达下限</span>'
+              : "未达下限";
+
         return `
           <article class="card ${hit ? "hit quake-hit" : ""}">
             <div class="quake-row">
               <div class="quake-main">
-                <div class="quake-name">${escapeHtml(hypo.name || "震源不明")}</div>
+                <div class="quake-name">${escapeHtml(nameText)}</div>
                 <div class="quake-sub">
-                  ${formatJST(when)} · M${escapeHtml(hypo.magnitude ?? "—")} · 深${escapeHtml(hypo.depth ?? "—")}km
+                  ${formatJST(when)} · ${escapeHtml(magText)}${escapeHtml(magSuffix)} · ${escapeHtml(formatDepthDisplay(hypo.depth))}
                   · 山梨 ${status}
                 </div>
               </div>
@@ -376,7 +486,9 @@
     );
     if (!res.ok) throw new Error("地震接口请求失败：" + res.status);
     const raw = await res.json();
-    return (raw || []).filter((x) => x.code === 551 || x.code === 556);
+    const items = (raw || []).filter((x) => x.code === 551 || x.code === 556);
+    // 同一事件（±10 分钟）只保留最完整报文
+    return mergeQuakes(items, 10);
   }
 
   /* ---------- 统计（山梨有感，震度≥1） ---------- */
